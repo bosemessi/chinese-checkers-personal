@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chinese Checkers</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/board.css">
+</head>
+<body>
+  <h1>Chinese Checkers</h1>
+
+  <!-- ===== Landing ===== -->
+  <section id="screen-landing" class="screen">
+    <p class="lead">Play with friends across the internet, peer-to-peer.<br>No accounts, no backend.</p>
+    <div class="screen-actions">
+      <button id="btn-host-game" class="primary-btn">Host a Game</button>
+      <button id="btn-play-local" class="secondary-btn">Play Locally (Hot-seat)</button>
+    </div>
+  </section>
+
+  <!-- ===== Local setup ===== -->
+  <section id="screen-local-setup" class="screen">
+    <h2>Local Hot-Seat</h2>
+    <div class="form-row">
+      <label for="player-count">Players:</label>
+      <select id="player-count">
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="6">6</option>
+      </select>
+    </div>
+    <div class="screen-actions">
+      <button id="btn-local-start" class="primary-btn">Start</button>
+      <button id="btn-local-back" class="secondary-btn">Back</button>
+    </div>
+  </section>
+
+  <!-- ===== Host lobby ===== -->
+  <section id="screen-lobby-host" class="screen">
+    <h2>Game Lobby</h2>
+    <p id="lobby-status">Setting up lobby…</p>
+
+    <div class="invite-row">
+      <input type="text" id="invite-link" readonly placeholder="invite link will appear here…">
+      <button id="btn-copy-link" class="secondary-btn">Copy</button>
+    </div>
+
+    <div class="lobby-players">
+      <h3>Players</h3>
+      <ol id="player-list"></ol>
+    </div>
+
+    <div id="knock-box" class="knock-box" style="display: none;">
+      <p><span id="knock-name"></span></p>
+      <button id="btn-accept-knock" class="success-btn">Let them in</button>
+      <button id="btn-deny-knock" class="danger-btn">Deny</button>
+    </div>
+
+    <div class="screen-actions">
+      <button id="btn-start-game" class="primary-btn" disabled>Start Game</button>
+      <button id="btn-host-back" class="secondary-btn">Back</button>
+    </div>
+
+    <p class="hint">Tip: only 2, 3, 4, or 6 total players are supported (Chinese Checkers rule).</p>
+  </section>
+
+  <!-- ===== Guest lobby ===== -->
+  <section id="screen-lobby-guest" class="screen">
+    <h2>Joining Game</h2>
+    <p id="guest-status">Connecting…</p>
+  </section>
+
+  <!-- ===== Game ===== -->
+  <section id="screen-game" class="screen">
+    <div class="controls">
+      <button id="btn-new-game" class="secondary-btn">New Game</button>
+      <button id="btn-undo" class="secondary-btn" disabled>Undo</button>
+      <button id="btn-sound" class="secondary-btn">Sound: On</button>
+      <button id="btn-leave-game" class="secondary-btn">Leave</button>
+    </div>
+    <div class="status-row">
+      <span id="status-chip"></span>
+      <span id="status">Loading…</span>
+      <span id="move-info">Moves: <span id="move-count">0</span></span>
+    </div>
+    <div class="play-area">
+      <svg id="board-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <aside class="sidebar">
+        <h2>Move history</h2>
+        <ol id="history-list"></ol>
+
+        <div id="chat-panel">
+          <h2>Chat</h2>
+          <ul id="chat-list"></ul>
+          <div class="chat-input-row">
+            <input type="text" id="chat-input" placeholder="Type a message…" maxlength="200">
+            <button id="btn-send-chat" class="secondary-btn">Send</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- PeerJS from CDN (the only runtime dependency). -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="js/gameLogic.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/network.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

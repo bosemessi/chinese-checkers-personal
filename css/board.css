@@ -1,0 +1,56 @@
+#board-svg {
+  width: 100%;
+  max-width: 620px;
+  height: auto;
+  display: block;
+  background: #3d2f24;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  flex-shrink: 1;
+}
+
+/* Holes (background) */
+.hole {
+  fill: #f0e1c1;
+  stroke: #8c7558;
+  stroke-width: 0.04;
+  cursor: pointer;
+  transition: stroke 0.15s, stroke-width 0.15s, filter 0.15s;
+}
+
+.hole:hover {
+  filter: brightness(1.15);
+}
+
+.hole.legal-dest {
+  stroke: #ffd54a;
+  stroke-width: 0.12;
+  fill: #fff3c0;
+}
+
+.hole.selected {
+  stroke: #ffffff;
+  stroke-width: 0.14;
+}
+
+/* Subtle ring on the from/to cells of the most recent move. */
+.hole.last-from {
+  stroke: #f0a060;
+  stroke-width: 0.08;
+  stroke-dasharray: 0.15;
+}
+
+.hole.last-to {
+  stroke: #f0a060;
+  stroke-width: 0.1;
+}
+
+/* Pegs (foreground, animated) */
+.peg {
+  stroke: #1c1a16;
+  stroke-width: 0.05;
+  pointer-events: none;            /* click falls through to the hole below */
+  filter: drop-shadow(0 0.04px 0.06px rgba(0,0,0,0.5));
+  /* Animate position changes for smooth piece movement & hop chains. */
+  transition: cx 0.22s ease-in-out, cy 0.22s ease-in-out;
+}
