@@ -22,12 +22,6 @@
   filter: brightness(1.15);
 }
 
-.hole.legal-dest {
-  stroke: #ffd54a;
-  stroke-width: 0.12;
-  fill: #fff3c0;
-}
-
 .hole.selected {
   stroke: #ffffff;
   stroke-width: 0.14;

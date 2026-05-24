@@ -135,17 +135,15 @@ function renderBoard() {
   refreshHoleClasses();
 }
 
-// Updates the "selected", "legal-dest", "last-move" classes on holes.
+// Updates the "selected" and "last-move" classes on holes. Legal destinations
+// are intentionally NOT highlighted — players must figure out their own paths.
 function refreshHoleClasses() {
   const svg = document.getElementById('board-svg');
   svg.querySelectorAll('.hole').forEach(h => {
-    h.classList.remove('selected', 'legal-dest', 'last-from', 'last-to');
+    h.classList.remove('selected', 'last-from', 'last-to');
   });
   if (selectedPeg) {
     svg.querySelector(`.hole[data-key="${selectedPeg}"]`)?.classList.add('selected');
-  }
-  for (const dest of legalDestinations) {
-    svg.querySelector(`.hole[data-key="${dest}"]`)?.classList.add('legal-dest');
   }
   if (lastMove) {
     svg.querySelector(`.hole[data-key="${lastMove.fromKey}"]`)?.classList.add('last-from');
