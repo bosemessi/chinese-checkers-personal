@@ -75,6 +75,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     // Guests cannot start a new game.
   });
+  document.getElementById('btn-end-move').addEventListener('click', commitActiveMove);
+  document.getElementById('btn-undo-hop').addEventListener('click', undoHop);
   document.getElementById('btn-undo').addEventListener('click', requestUndoFromButton);
   document.getElementById('btn-sound').addEventListener('click', () => {
     ensureAudio();

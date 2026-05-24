@@ -84,10 +84,13 @@ function onGuestData(peerId, data) {
   if (data.type === 'request_move') {
     if (playerIdx <= 0) return;
     if (gameState.currentPlayer !== playerIdx) return;
-    const legal = getLegalMoves(gameState, data.fromKey);
-    if (!legal.includes(data.toKey)) return;
-    doMove(data.fromKey, data.toKey);
-    broadcastMove(data.fromKey, data.toKey);
+    const v = validatePath(gameState, data.path);
+    if (!v.ok) return;
+    // Re-broadcast to every other peer (NOT the originator — they already
+    // applied this move optimistically when they tapped End Move).
+    broadcastMoveExcept(data.path, peerId);
+    // Host wasn't the mover, so animate locally.
+    playMovePath(data.path);
   } else if (data.type === 'chat') {
     // Relay to all OTHER accepted guests (sender already showed it locally).
     appendChatMessage(playerIdx, data.text);
@@ -142,8 +145,18 @@ function startNetworkGame() {
   showScreen('game');
 }
 
-function broadcastMove(fromKey, toKey) {
-  broadcastToAll({ type: 'move_made', fromKey, toKey });
+function broadcastMove(path) {
+  broadcastToAll({ type: 'move_made', path });
+}
+
+// Like broadcastMove but skips a single peer (used when relaying a move
+// that came from that peer — they already applied it locally).
+function broadcastMoveExcept(path, excludePeerId) {
+  const msg = { type: 'move_made', path };
+  for (const peerId of acceptedOrder) {
+    if (peerId === excludePeerId) continue;
+    connections.get(peerId)?.send(msg);
+  }
 }
 
 function broadcastToAll(msg) {
@@ -198,7 +211,7 @@ function onHostData(data) {
     startNewGame(data.numPlayers);
     showScreen('game');
   } else if (data.type === 'move_made') {
-    doMove(data.fromKey, data.toKey);
+    playMovePath(data.path);
   } else if (data.type === 'chat') {
     appendChatMessage(data.sender, data.text);
   } else if (data.type === 'undo_vote') {
@@ -218,9 +231,9 @@ function onHostData(data) {
   }
 }
 
-function sendNetworkMove(fromKey, toKey) {
+function sendNetworkMove(path) {
   if (hostConn && hostConn.open) {
-    hostConn.send({ type: 'request_move', fromKey, toKey });
+    hostConn.send({ type: 'request_move', path });
   }
 }
 

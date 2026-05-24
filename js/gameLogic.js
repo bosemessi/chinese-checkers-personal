@@ -202,6 +202,95 @@ function applyMove(state, fromKey, toKey) {
   return { ok: true };
 }
 
+// =============================================================
+// Manual-hop helpers
+// =============================================================
+// One-hop landings reachable in a single jump from `currentKey`, treating
+// `fromKey` (the move's origin) as empty so a chain can pass back through it.
+// Used during a player's active move to figure out what cells are legal
+// to tap next.
+function getHopLandings(state, fromKey, currentKey) {
+  const isPeg = k => state.pegs.has(k) && k !== fromKey;
+  const isEmpty = k => !state.pegs.has(k) || k === fromKey;
+  const curr = CELL_BY_KEY.get(currentKey);
+  const landings = [];
+  for (const nKey of NEIGHBORS.get(currentKey)) {
+    if (!isPeg(nKey)) continue;
+    const n = CELL_BY_KEY.get(nKey);
+    const beyondKey = cellAt(2 * n.x - curr.x, 2 * n.y - curr.y);
+    if (!beyondKey || !isEmpty(beyondKey)) continue;
+    if (beyondKey === currentKey) continue;
+    landings.push(beyondKey);
+  }
+  return landings;
+}
+
+// Validate that `path` (>= 2 keys, starting at the moving peg) is a legal
+// move: either a single slide into an adjacent empty cell, or a chain of
+// one-hop jumps over a peg into the empty cell beyond. Returns { ok }.
+function validatePath(state, path) {
+  if (!Array.isArray(path) || path.length < 2) return { ok: false, error: 'Path too short' };
+  const fromKey = path[0];
+  if (!state.pegs.has(fromKey)) return { ok: false, error: 'No peg at origin' };
+  if (state.pegs.get(fromKey) !== state.currentPlayer) {
+    return { ok: false, error: 'Not your peg' };
+  }
+  if (state.winner !== null) return { ok: false, error: 'Game over' };
+
+  const isPeg = k => state.pegs.has(k) && k !== fromKey;
+  const isEmpty = k => !state.pegs.has(k) || k === fromKey;
+
+  // A length-2 path can be either a single slide (into an adjacent empty
+  // cell) or a single hop (over an adjacent peg into the cell beyond).
+  // Try the slide interpretation first; otherwise fall through to hop
+  // validation, which handles chains of any length.
+  if (path.length === 2) {
+    const toKey = path[1];
+    if (NEIGHBORS.get(fromKey).includes(toKey)) {
+      if (!isEmpty(toKey)) return { ok: false, error: 'Destination not empty' };
+      return { ok: true };
+    }
+  }
+
+  // Hop chain. Every step must be a one-hop jump.
+  const seen = new Set([fromKey]);
+  for (let i = 0; i < path.length - 1; i++) {
+    const aKey = path[i];
+    const bKey = path[i + 1];
+    if (seen.has(bKey)) return { ok: false, error: 'Path revisits a cell' };
+    const a = CELL_BY_KEY.get(aKey);
+    if (!a) return { ok: false, error: 'Unknown cell in path' };
+    const b = CELL_BY_KEY.get(bKey);
+    if (!b) return { ok: false, error: 'Unknown cell in path' };
+    // The jumped-over cell is the midpoint of a → b.
+    const midKey = cellAt((a.x + b.x) / 2, (a.y + b.y) / 2);
+    if (!midKey) return { ok: false, error: 'Not a one-hop jump' };
+    if (!isPeg(midKey)) return { ok: false, error: 'Must hop over a peg' };
+    if (!isEmpty(bKey)) return { ok: false, error: 'Landing not empty' };
+    seen.add(bKey);
+  }
+  return { ok: true };
+}
+
+// Apply a move described by its full path. Validates first.
+function applyMoveByPath(state, path) {
+  const v = validatePath(state, path);
+  if (!v.ok) return v;
+  const fromKey = path[0];
+  const toKey = path[path.length - 1];
+  const player = state.pegs.get(fromKey);
+  state.pegs.delete(fromKey);
+  state.pegs.set(toKey, player);
+  state.moveHistory.push({ player, fromKey, toKey, path: path.slice() });
+
+  if (checkPlayerWon(state, player)) {
+    state.winner = player;
+  } else {
+    state.currentPlayer = (state.currentPlayer + 1) % state.numPlayers;
+  }
+  return { ok: true };
+}
+
 // A player wins when every cell of their target region is occupied by
 // one of their own pegs.
 function checkPlayerWon(state, playerIdx) {

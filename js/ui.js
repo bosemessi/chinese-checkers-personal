@@ -7,8 +7,15 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CELL_RADIUS = 0.42;
 const PEG_RADIUS = 0.38;
-const HOP_DURATION_MS = 220;   // per hop / step
-const HOP_GAP_MS = 60;         // pause between hops in a chain
+
+// Local per-tap pacing while the current player is building a chain.
+const HOP_DURATION_MS = 220;
+const HOP_GAP_MS = 60;
+
+// Slower pacing used to replay a remote player's committed move, so the
+// receiver sees each landing distinctly — the "physical placement" feel.
+const PLAYBACK_HOP_MS = 280;
+const PLAYBACK_LANDING_PAUSE_MS = 220;
 
 const PLAYER_COLORS = [
   '#e74c3c', // 1: red
@@ -20,8 +27,9 @@ const PLAYER_COLORS = [
 ];
 
 let gameState = null;
-let selectedPeg = null;
-let legalDestinations = [];
+// An in-progress move by the local player. null when no peg is being moved.
+// hopPath always starts with fromKey; currentKey is its last element.
+let activeMove = null; // { fromKey, hopPath: [k0, k1, ...], currentKey }
 // Maps the cell key a peg currently occupies → that peg's SVG element.
 let pegElements = new Map();
 // Cells of the most recent move, for "last move" highlighting.
@@ -78,8 +86,7 @@ function toggleSound() {
 // Setup
 // =============================================================
 function startNewGame(numPlayers) {
-  selectedPeg = null;
-  legalDestinations = [];
+  activeMove = null;
   pegElements = new Map();
   lastMove = null;
   isAnimating = false;
@@ -142,8 +149,8 @@ function refreshHoleClasses() {
   svg.querySelectorAll('.hole').forEach(h => {
     h.classList.remove('selected', 'last-from', 'last-to');
   });
-  if (selectedPeg) {
-    svg.querySelector(`.hole[data-key="${selectedPeg}"]`)?.classList.add('selected');
+  if (activeMove) {
+    svg.querySelector(`.hole[data-key="${activeMove.currentKey}"]`)?.classList.add('selected');
   }
   if (lastMove) {
     svg.querySelector(`.hole[data-key="${lastMove.fromKey}"]`)?.classList.add('last-from');
@@ -152,8 +159,18 @@ function refreshHoleClasses() {
 }
 
 // =============================================================
-// Click handling
+// Click handling — manual hop model
 // =============================================================
+// The local player builds their move by tapping cell-by-cell:
+//   1. Tap one of your own pegs → start a move (peg is "in hand").
+//   2. Tap an adjacent empty cell → auto-commits a single slide.
+//   3. Tap a one-hop landing (over a peg, into the empty cell beyond) →
+//      peg moves to that landing; chain may continue.
+//   4. After ≥1 hop, "End Move" commits and "Undo Hop" backtracks one
+//      landing. Once a chain has started, taps on cells that aren't a
+//      legal next hop are ignored — use the buttons.
+//   5. Before any hops, tapping the origin again or a different own peg
+//      cancels / re-selects.
 function onCellClick(key) {
   ensureAudio(); // first user gesture unlocks Web Audio
   if (isAnimating) return;
@@ -162,50 +179,147 @@ function onCellClick(key) {
   // Network mode: you can only act on your own turn.
   if (gameMode !== 'local' && gameState.currentPlayer !== myPlayerIdx) return;
 
-  // 1. Click a legal destination → make the move.
-  if (selectedPeg && legalDestinations.includes(key)) {
-    // Capture before doMove() clears the global `selectedPeg`.
-    const fromKey = selectedPeg;
-    if (gameMode === 'guest') {
-      // Send to host; the resulting `move_made` broadcast will animate locally.
-      sendNetworkMove(fromKey, key);
-      selectedPeg = null;
-      legalDestinations = [];
-      refreshHoleClasses();
-    } else {
-      // 'local' or 'host': apply directly. Host also broadcasts.
-      doMove(fromKey, key);
-      if (gameMode === 'host') broadcastMove(fromKey, key);
+  // --- No active move yet ---
+  if (!activeMove) {
+    if (gameState.pegs.get(key) === gameState.currentPlayer) {
+      startActiveMove(key);
     }
     return;
   }
 
-  // 2. Click one of the current player's pegs → select it.
-  if (gameState.pegs.get(key) === gameState.currentPlayer) {
-    selectedPeg = key;
-    legalDestinations = getLegalMoves(gameState, key);
-    refreshHoleClasses();
-    return;
+  // --- Active move in progress ---
+  const { fromKey, hopPath, currentKey } = activeMove;
+  const hopsSoFar = hopPath.length - 1;
+
+  // Cancel / re-select before any hops have happened.
+  if (hopsSoFar === 0) {
+    if (key === fromKey) {
+      cancelActiveMove();
+      return;
+    }
+    if (gameState.pegs.get(key) === gameState.currentPlayer) {
+      cancelActiveMove();
+      startActiveMove(key);
+      return;
+    }
+    // Tap an adjacent empty cell → auto-commit a single slide.
+    const adjacent = NEIGHBORS.get(fromKey).includes(key);
+    const empty = !gameState.pegs.has(key) || key === fromKey;
+    if (adjacent && empty) {
+      extendChainTo(key, /*sound*/ soundStep).then(commitActiveMove);
+      return;
+    }
   }
 
-  // 3. Anything else → deselect.
-  selectedPeg = null;
-  legalDestinations = [];
-  refreshHoleClasses();
+  // Extend the chain by a single hop, if `key` is one hop from currentKey
+  // and isn't already on the chain (revisits aren't valid moves).
+  const landings = getHopLandings(gameState, fromKey, currentKey)
+    .filter(k => !hopPath.includes(k));
+  if (landings.includes(key)) {
+    extendChainTo(key, /*sound*/ soundHop);
+    return;
+  }
+  // Otherwise ignore — player should use End Move or Undo Hop.
 }
 
-async function doMove(fromKey, toKey) {
-  const path = getMovePath(gameState, fromKey, toKey);
-  if (!path) return;
+function startActiveMove(pegKey) {
+  activeMove = { fromKey: pegKey, hopPath: [pegKey], currentKey: pegKey };
+  refreshHoleClasses();
+  updateMoveButtons();
+}
+
+function cancelActiveMove() {
+  activeMove = null;
+  refreshHoleClasses();
+  updateMoveButtons();
+}
+
+// Animate the peg from its current cell to `nextKey` (one step) and append
+// to the chain. Returns a promise that resolves after the animation window.
+async function extendChainTo(nextKey, soundFn) {
+  const peg = pegElements.get(activeMove.currentKey);
+  if (!peg) return;
+  isAnimating = true;
+  const cell = CELL_BY_KEY.get(nextKey);
+  peg.setAttribute('cx', cell.x);
+  peg.setAttribute('cy', cell.y);
+  pegElements.delete(activeMove.currentKey);
+  pegElements.set(nextKey, peg);
+  activeMove.hopPath.push(nextKey);
+  activeMove.currentKey = nextKey;
+  if (soundFn) soundFn();
+  refreshHoleClasses();
+  await sleep(HOP_DURATION_MS);
+  isAnimating = false;
+  updateMoveButtons();
+}
+
+// Step back one landing in the in-progress chain.
+async function undoHop() {
+  if (isAnimating || !activeMove) return;
+  if (activeMove.hopPath.length < 2) return;
+  const peg = pegElements.get(activeMove.currentKey);
+  if (!peg) return;
+  isAnimating = true;
+  const popped = activeMove.hopPath.pop();
+  activeMove.currentKey = activeMove.hopPath[activeMove.hopPath.length - 1];
+  const cell = CELL_BY_KEY.get(activeMove.currentKey);
+  peg.setAttribute('cx', cell.x);
+  peg.setAttribute('cy', cell.y);
+  pegElements.delete(popped);
+  pegElements.set(activeMove.currentKey, peg);
+  soundStep();
+  refreshHoleClasses();
+  await sleep(HOP_DURATION_MS);
+  isAnimating = false;
+  updateMoveButtons();
+}
+
+// Commit the current chain as a turn. Validates, applies, and (in network
+// mode) sends or broadcasts the path. The peg is already where it needs
+// to be visually, so no playback animation is needed locally.
+function commitActiveMove() {
+  if (isAnimating || !activeMove) return;
+  if (activeMove.hopPath.length < 2) return;
+  const path = activeMove.hopPath.slice();
+
+  if (gameMode === 'guest') {
+    // Optimistic local apply, then send to host. Host re-broadcasts to other
+    // guests but must skip us (we've already applied).
+    const result = applyMoveByPath(gameState, path);
+    if (!result.ok) {
+      cancelActiveMove();
+      return;
+    }
+    sendNetworkMove(path);
+  } else {
+    const result = applyMoveByPath(gameState, path);
+    if (!result.ok) {
+      cancelActiveMove();
+      return;
+    }
+    if (gameMode === 'host') broadcastMove(path);
+  }
+
+  lastMove = { fromKey: path[0], toKey: path[path.length - 1] };
+  activeMove = null;
+  refreshHoleClasses();
+  updateMoveButtons();
+  renderHistory();
+  updateStatus();
+  if (gameState.winner !== null) soundWin();
+}
+
+// Animate a remote player's committed move on the receiver's screen.
+// Slower than the local per-tap pacing so each landing reads as a
+// deliberate placement, not a blur.
+async function playMovePath(path) {
+  const result = applyMoveByPath(gameState, path);
+  if (!result.ok) return;
 
   isAnimating = true;
-  selectedPeg = null;
-  legalDestinations = [];
-  refreshHoleClasses();
-
-  applyMove(gameState, fromKey, toKey);
-  lastMove = { fromKey, toKey };
-
+  const fromKey = path[0];
+  const toKey = path[path.length - 1];
   const peg = pegElements.get(fromKey);
   if (!peg) {
     isAnimating = false;
@@ -216,17 +330,29 @@ async function doMove(fromKey, toKey) {
     const cell = CELL_BY_KEY.get(path[i]);
     peg.setAttribute('cx', cell.x);
     peg.setAttribute('cy', cell.y);
-    if (i === 1 && path.length === 2) soundStep();
+    if (path.length === 2) soundStep();
     else soundHop();
-    await sleep(HOP_DURATION_MS + (i < path.length - 1 ? HOP_GAP_MS : 0));
+    await sleep(PLAYBACK_HOP_MS);
+    if (i < path.length - 1) await sleep(PLAYBACK_LANDING_PAUSE_MS);
   }
   pegElements.set(toKey, peg);
+  lastMove = { fromKey, toKey };
 
   isAnimating = false;
   refreshHoleClasses();
+  updateMoveButtons();
   renderHistory();
   updateStatus();
   if (gameState.winner !== null) soundWin();
+}
+
+function updateMoveButtons() {
+  const endBtn = document.getElementById('btn-end-move');
+  const undoHopBtn = document.getElementById('btn-undo-hop');
+  if (!endBtn || !undoHopBtn) return;
+  const inChain = !!activeMove && activeMove.hopPath.length >= 2;
+  endBtn.disabled = !inChain || isAnimating;
+  undoHopBtn.disabled = !inChain || isAnimating;
 }
 
 function sleep(ms) {
@@ -248,8 +374,7 @@ function undo() {
   peg.setAttribute('cx', fromCell.x);
   peg.setAttribute('cy', fromCell.y);
   pegElements.set(last.fromKey, peg);
-  selectedPeg = null;
-  legalDestinations = [];
+  activeMove = null;
   lastMove = gameState.moveHistory.length > 0
     ? {
         fromKey: gameState.moveHistory.at(-1).fromKey,
@@ -257,6 +382,7 @@ function undo() {
       }
     : null;
   refreshHoleClasses();
+  updateMoveButtons();
   renderHistory();
   updateStatus();
 }
@@ -285,8 +411,10 @@ function updateStatus() {
   //   local  → any move can be undone
   //   network → only the player who made the last move can request undo
   //             (and we're not already waiting on a pending request)
+  // While the current player is building a chain, block move-level undo
+  // so the two undo concepts don't interfere.
   const btnUndo = document.getElementById('btn-undo');
-  if (gameState.moveHistory.length === 0 || isAnimating) {
+  if (gameState.moveHistory.length === 0 || isAnimating || activeMove) {
     btnUndo.disabled = true;
   } else if (gameMode === 'local') {
     btnUndo.disabled = false;
@@ -297,6 +425,7 @@ function updateStatus() {
   btnUndo.textContent = (gameMode === 'local')
     ? 'Undo'
     : (undoPending ? 'Waiting…' : 'Request Undo');
+  updateMoveButtons();
 }
 
 function renderHistory() {
